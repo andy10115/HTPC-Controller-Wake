@@ -81,6 +81,9 @@ chmod +x setup-controller-wakeup.sh bin/enable-usb-wakeup.sh check-wakeup-status
    USB wakeup chain.
 7. Suspend and test the controller.
 
+Setup also installs a pre-suspend guard automatically. There are no additional
+prompts or configuration steps for it.
+
 A reboot is **not required just to activate the newly installed rule**. Future
 USB `add` events for the discovered hub/root-hub nodes (including boot) will
 reassert their `power/wakeup=enabled` state.
@@ -103,7 +106,7 @@ htpc-controller-wake-status
 
 Show:
 
-- whether the installed rule/helper/management commands exist
+- whether the installed rule/helper/suspend guard/management commands exist
 - the current udev rule
 - configured controllers and their selected USB paths
 - wakeup state for each configured device and its USB ancestor chain
@@ -145,6 +148,24 @@ product IDs in different modes or pairing states.
 
 The installed helper remains available for support/troubleshooting and can walk
 a supplied USB sysfs path to enable every wake-capable USB ancestor.
+
+### Pre-suspend quiet window
+
+Some controller receivers generate USB activity while the controller is powering
+off. If that happens while the kernel is entering suspend, the activity can be
+seen as a wake event and abort the suspend transition.
+
+To avoid that race, setup saves the discovered wake-capable topology nodes and
+installs a drop-in for `systemd-suspend.service`. Immediately before the actual
+suspend operation, the guard temporarily sets only those configured wake paths
+to `disabled`, waits **10 seconds** for controller/receiver shutdown traffic to
+settle, then sets the same paths back to `enabled` and allows suspend to
+continue. The guard re-arms the paths on interruption as well, so a canceled or
+failed suspend does not intentionally leave controller wake disabled.
+
+This does not globally suppress wake sources such as the system power button;
+it only disarms the USB topology nodes configured by this project during the
+quiet window.
 
 ## Troubleshooting
 
@@ -188,7 +209,10 @@ receiver and enables only wake-capable nodes in that path.
 
 ```text
 /etc/udev/rules.d/99-controller-wakeup.rules
+/etc/htpc-controller-wake/wake-targets
+/etc/systemd/system/systemd-suspend.service.d/htpc-controller-wake.conf
 /usr/local/lib/htpc-controller-wake/enable-usb-wakeup.sh
+/usr/local/bin/htpc-controller-wake-suspend-guard
 /usr/local/bin/htpc-controller-wake-setup
 /usr/local/bin/htpc-controller-wake-status
 /usr/local/bin/htpc-controller-wake-uninstall

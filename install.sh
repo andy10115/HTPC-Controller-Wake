@@ -40,6 +40,7 @@ fi
 required=(
     "$SOURCE_DIR/setup-controller-wakeup.sh"
     "$SOURCE_DIR/bin/enable-usb-wakeup.sh"
+    "$SOURCE_DIR/bin/suspend-wake-guard.sh"
     "$SOURCE_DIR/check-wakeup-status.sh"
     "$SOURCE_DIR/uninstall.sh"
 )
@@ -53,6 +54,7 @@ done
 chmod +x \
     "$SOURCE_DIR/setup-controller-wakeup.sh" \
     "$SOURCE_DIR/bin/enable-usb-wakeup.sh" \
+    "$SOURCE_DIR/bin/suspend-wake-guard.sh" \
     "$SOURCE_DIR/check-wakeup-status.sh" \
     "$SOURCE_DIR/uninstall.sh"
 

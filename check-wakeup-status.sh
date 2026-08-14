@@ -6,6 +6,11 @@
 set -u
 
 RULE_FILE="${HTPC_WAKE_RULE_FILE:-/etc/udev/rules.d/99-controller-wakeup.rules}"
+CONFIG_DIR="${HTPC_WAKE_CONFIG_DIR:-/etc/htpc-controller-wake}"
+WAKE_TARGETS_FILE="${HTPC_WAKE_TARGETS_FILE:-$CONFIG_DIR/wake-targets}"
+SUSPEND_DROPIN_DIR="${HTPC_WAKE_SUSPEND_DROPIN_DIR:-/etc/systemd/system/systemd-suspend.service.d}"
+SUSPEND_DROPIN="${HTPC_WAKE_SUSPEND_DROPIN:-$SUSPEND_DROPIN_DIR/htpc-controller-wake.conf}"
+SUSPEND_GUARD_DEST="${HTPC_WAKE_SUSPEND_GUARD_DEST:-/usr/local/bin/htpc-controller-wake-suspend-guard}"
 LIB_DIR="${HTPC_WAKE_LIB_DIR:-/usr/local/lib/htpc-controller-wake}"
 HELPER_DEST="$LIB_DIR/enable-usb-wakeup.sh"
 SETUP_DEST="${HTPC_WAKE_SETUP_DEST:-/usr/local/bin/htpc-controller-wake-setup}"
@@ -59,6 +64,7 @@ print_header
 echo "Installed components:"
 printf '  %-10s %s\n' "Rule:" "$([[ -f "$RULE_FILE" ]] && echo yes || echo no)"
 printf '  %-10s %s\n' "Helper:" "$([[ -x "$HELPER_DEST" ]] && echo yes || echo no)"
+printf '  %-10s %s\n' "Guard:" "$([[ -x "$SUSPEND_GUARD_DEST" && -f "$SUSPEND_DROPIN" && -f "$WAKE_TARGETS_FILE" ]] && echo yes || echo no)"
 printf '  %-10s %s\n' "Setup:" "$([[ -x "$SETUP_DEST" ]] && echo yes || echo no)"
 printf '  %-10s %s\n' "Status:" "$([[ -x "$STATUS_DEST" ]] && echo yes || echo no)"
 printf '  %-10s %s\n' "Uninstall:" "$([[ -x "$UNINSTALL_DEST" ]] && echo yes || echo no)"
