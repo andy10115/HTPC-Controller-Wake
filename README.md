@@ -5,9 +5,10 @@ receiver/dongle. The project is aimed at gaming-focused HTPC setups such as
 Bazzite and CachyOS, but it only depends on Bash, udev/systemd tooling, and the
 standard Linux USB sysfs interface.
 
-The setup tool lets you choose one or more USB controller receivers, creates a
-udev rule for each exact USB **vendor ID + product ID**, and enables
-`power/wakeup` on the selected USB device plus the USB hubs/ancestors above it.
+The setup tool lets you choose one or more USB controller receivers, resolves
+each selected receiver to its current USB topology, discovers every USB node in
+that path that actually exposes `power/wakeup`, and creates udev rules that keep
+those wake-capable nodes enabled.
 
 ## Before you start
 
@@ -36,12 +37,13 @@ This project is intended for controllers whose wake signal arrives through a
 USB device, normally a 2.4 GHz receiver/dongle. It does not configure a
 Bluetooth controller's wireless wake path.
 
-### USB ports are not pinned
+### USB topology
 
-Rules match the selected receiver by VID:PID, not by physical port. Moving the
-same receiver to another USB port normally does **not** require setup again.
-The helper discovers the receiver's current USB ancestor chain each time the
-receiver is enumerated.
+The selected receiver is used to discover the USB path that must remain
+wake-capable. The generated rules target the wake-capable nodes in that path
+(such as an intermediate hub or root hub), rather than depending on the
+receiver's product ID remaining constant. If you move the receiver to a
+different physical USB path, rerun setup so the new wake path can be discovered.
 
 ## Install
 
@@ -75,12 +77,13 @@ chmod +x setup-controller-wakeup.sh bin/enable-usb-wakeup.sh check-wakeup-status
 5. Confirm the selection. If a current-format configuration already exists,
    setup offers to keep those entries before you add or replace devices.
 6. The script installs the rule and helper, reloads udev, immediately applies
-   wake settings to the currently connected device(s), and prints their current
+   wake settings to the discovered USB wake path(s), and prints their current
    USB wakeup chain.
 7. Suspend and test the controller.
 
 A reboot is **not required just to activate the newly installed rule**. Future
-real USB `add` events (including boot and reconnects) will run the helper again.
+USB `add` events for the discovered hub/root-hub nodes (including boot) will
+reassert their `power/wakeup=enabled` state.
 
 ## Installed commands
 
@@ -102,7 +105,7 @@ Show:
 
 - whether the installed rule/helper/management commands exist
 - the current udev rule
-- configured VID:PID devices that are currently connected
+- configured controllers and their selected USB paths
 - wakeup state for each configured device and its USB ancestor chain
 - wakeup state for all USB devices
 - active suspend mode
@@ -117,32 +120,31 @@ Remove the rule, helper, documentation, and installed management commands.
 
 ## How it works
 
-The generated udev rule looks conceptually like this:
+During setup, the selected receiver is resolved from its `lsusb` bus/device
+identity to its current sysfs USB node. Setup then walks upward through the USB
+ancestry and records only nodes that expose `power/wakeup`. A controller node
+that does not expose that attribute is skipped automatically.
+
+For example, if the selected receiver is under an intermediate hub and only the
+hub and root hub expose wake controls, the generated rules look conceptually
+like this:
 
 ```udev
-ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="2dc8", ATTR{idProduct}=="3106", RUN+="/usr/local/lib/htpc-controller-wake/enable-usb-wakeup.sh %p"
+ACTION=="add", SUBSYSTEM=="usb", KERNEL=="5-1", TEST=="power/wakeup", ATTR{power/wakeup}="enabled"
+ACTION=="add", SUBSYSTEM=="usb", KERNEL=="usb5", TEST=="power/wakeup", ATTR{power/wakeup}="enabled"
 ```
 
-Matching both vendor and product ID keeps the rule scoped to the selected type
-of receiver instead of every USB product made by the same vendor.
+The exact `KERNEL` values are discovered from the machine during setup; they are
+not hard-coded by the project. Multiple selected controllers can share wake
+targets, and duplicate targets are written only once.
 
-When the receiver is added, the helper starts at that sysfs USB device and walks
-up its ancestor chain. It only touches ancestors whose subsystem is `usb`, and
-for each one that exposes `power/wakeup`, it attempts to write `enabled`.
-Intermediate/root hubs can matter because some systems gate downstream wake
-through them.
+The selected receiver's VID:PID is retained as descriptive configuration
+metadata for status/reconfiguration, but the persistent wake rule does not rely
+on an exact product ID. This matters for receivers that enumerate with different
+product IDs in different modes or pairing states.
 
-The helper logs successful and failed wakeup writes with the journal tag:
-
-```text
-htpc-controller-wake
-```
-
-You can inspect those messages directly with:
-
-```bash
-journalctl -t htpc-controller-wake
-```
+The installed helper remains available for support/troubleshooting and can walk
+a supplied USB sysfs path to enable every wake-capable USB ancestor.
 
 ## Troubleshooting
 
@@ -154,7 +156,8 @@ htpc-controller-wake-status
 
 Things to look for:
 
-- The configured receiver should appear under **Configured device matches**.
+- The configured receiver or its configured USB path should appear under
+  **Configured device matches**.
 - Relevant entries in its USB ancestor chain should normally show
   `wakeup=enabled` when they expose a wakeup attribute.
 - If the receiver is absent, make sure it is connected and that you selected the
@@ -177,10 +180,9 @@ Git.
 
 ## Why not enable wakeup on every USB device?
 
-Because broad USB wake rules can create unwanted wakeups from mice, hubs, storage
-re-enumeration, or other devices. This project deliberately scopes the udev rule
-to the receiver VID:PID values you selected while enabling only the necessary
-USB ancestor chain for that receiver.
+Because broad USB wake rules can create unwanted wakeups from mice, storage, or
+other devices. This project discovers the specific USB path used by the selected
+receiver and enables only wake-capable nodes in that path.
 
 ## Files installed
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # enable-usb-wakeup.sh
 #
-# Internal udev helper. Receives a udev device path (%p), then enables
+# Internal support helper. Receives a sysfs/udev device path, then enables
 # power/wakeup on that USB device and every USB ancestor that exposes the
 # attribute (including intermediate/root hubs). Non-USB ancestors are left
 # untouched.
@@ -9,6 +9,7 @@
 set -u
 
 TAG="htpc-controller-wake"
+SYSFS_ROOT="${HTPC_WAKE_SYSFS_ROOT:-/sys}"
 devpath="${1:-}"
 
 log() {
@@ -25,10 +26,12 @@ fi
 
 # udev passes %p as /devices/...; accepting /sys/... as well makes manual
 # troubleshooting less error-prone.
-if [[ "$devpath" == /sys/* ]]; then
+if [[ "$devpath" == "$SYSFS_ROOT"/* ]]; then
     current="$(readlink -f "$devpath" 2>/dev/null || true)"
-else
+elif [[ "$SYSFS_ROOT" == "/sys" ]]; then
     current="$(readlink -f "/sys${devpath}" 2>/dev/null || true)"
+else
+    current="$(readlink -f "$SYSFS_ROOT${devpath}" 2>/dev/null || true)"
 fi
 
 if [[ -z "$current" || ! -d "$current" ]]; then
@@ -41,7 +44,7 @@ wake_files=0
 enabled_any=0
 failed_any=0
 
-while [[ "$current" == /sys/* && "$current" != /sys ]]; do
+while [[ "$current" == "$SYSFS_ROOT"/* && "$current" != "$SYSFS_ROOT" ]]; do
     subsystem=""
     if [[ -L "$current/subsystem" ]]; then
         subsystem="$(basename "$(readlink -f "$current/subsystem")")"

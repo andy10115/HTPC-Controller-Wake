@@ -5,11 +5,14 @@
 
 set -u
 
-RULE_FILE="/etc/udev/rules.d/99-controller-wakeup.rules"
-HELPER_DEST="/usr/local/lib/htpc-controller-wake/enable-usb-wakeup.sh"
-SETUP_DEST="/usr/local/bin/htpc-controller-wake-setup"
-STATUS_DEST="/usr/local/bin/htpc-controller-wake-status"
-UNINSTALL_DEST="/usr/local/bin/htpc-controller-wake-uninstall"
+RULE_FILE="${HTPC_WAKE_RULE_FILE:-/etc/udev/rules.d/99-controller-wakeup.rules}"
+LIB_DIR="${HTPC_WAKE_LIB_DIR:-/usr/local/lib/htpc-controller-wake}"
+HELPER_DEST="$LIB_DIR/enable-usb-wakeup.sh"
+SETUP_DEST="${HTPC_WAKE_SETUP_DEST:-/usr/local/bin/htpc-controller-wake-setup}"
+STATUS_DEST="${HTPC_WAKE_STATUS_DEST:-/usr/local/bin/htpc-controller-wake-status}"
+UNINSTALL_DEST="${HTPC_WAKE_UNINSTALL_DEST:-/usr/local/bin/htpc-controller-wake-uninstall}"
+SYSFS_ROOT="${HTPC_WAKE_SYSFS_ROOT:-/sys}"
+USB_DEVICES_DIR="$SYSFS_ROOT/bus/usb/devices"
 
 print_header() {
     echo "=========================================="
@@ -25,7 +28,7 @@ show_usb_chain() {
     current="$(readlink -f "$start" 2>/dev/null || true)"
     [[ -n "$current" ]] || return 1
 
-    while [[ "$current" == /sys/* && "$current" != /sys ]]; do
+    while [[ "$current" == "$SYSFS_ROOT"/* && "$current" != "$SYSFS_ROOT" ]]; do
         subsystem=""
         [[ -L "$current/subsystem" ]] && subsystem="$(basename "$(readlink -f "$current/subsystem")")"
 
@@ -82,11 +85,86 @@ echo "Configured device matches currently present:"
 echo "--------------------------------------------"
 
 found_config=0
-declare -A seen_pairs=()
-rule_regex='ATTR\{idVendor\}=="([[:xdigit:]]{4})".*ATTR\{idProduct\}=="([[:xdigit:]]{4})"'
+controller_regex='^#[[:space:]]+(.+)[[:space:]]+\(([[:xdigit:]]{4}):([[:xdigit:]]{4})\)$'
+path_regex='^#[[:space:]]+Device[[:space:]]+path:[[:space:]]+([^[:space:]]+)$'
+targets_regex='^#[[:space:]]+Wake[[:space:]]+targets:[[:space:]]+(.+)$'
+legacy_rule_regex='ATTR\{idVendor\}=="([[:xdigit:]]{4})".*ATTR\{idProduct\}=="([[:xdigit:]]{4})"'
+
+declare -a CFG_NAME=()
+declare -a CFG_VID=()
+declare -a CFG_PID=()
+declare -a CFG_PATH=()
+declare -a CFG_TARGETS=()
+
+pending_name=""; pending_vid=""; pending_pid=""; pending_path=""; pending_targets=""
 if [[ -f "$RULE_FILE" ]]; then
     while IFS= read -r rule_line; do
-        if [[ "$rule_line" =~ $rule_regex ]]; then
+        if [[ "$rule_line" =~ $controller_regex ]]; then
+            if [[ -n "$pending_vid" && -n "$pending_path" && -n "$pending_targets" ]]; then
+                CFG_NAME+=("$pending_name")
+                CFG_VID+=("$pending_vid")
+                CFG_PID+=("$pending_pid")
+                CFG_PATH+=("$pending_path")
+                CFG_TARGETS+=("$pending_targets")
+            fi
+            pending_name="${BASH_REMATCH[1]}"
+            pending_vid="${BASH_REMATCH[2],,}"
+            pending_pid="${BASH_REMATCH[3],,}"
+            pending_path=""
+            pending_targets=""
+            continue
+        fi
+        [[ "$rule_line" =~ $path_regex ]] && { pending_path="${BASH_REMATCH[1]}"; continue; }
+        [[ "$rule_line" =~ $targets_regex ]] && { pending_targets="${BASH_REMATCH[1]}"; continue; }
+    done < "$RULE_FILE"
+
+    if [[ -n "$pending_vid" && -n "$pending_path" && -n "$pending_targets" ]]; then
+        CFG_NAME+=("$pending_name")
+        CFG_VID+=("$pending_vid")
+        CFG_PID+=("$pending_pid")
+        CFG_PATH+=("$pending_path")
+        CFG_TARGETS+=("$pending_targets")
+    fi
+fi
+
+if (( ${#CFG_VID[@]} > 0 )); then
+    found_config=1
+    for i in "${!CFG_VID[@]}"; do
+        echo
+        echo "  Configured VID:PID ${CFG_VID[$i]}:${CFG_PID[$i]}"
+        dev="$USB_DEVICES_DIR/${CFG_PATH[$i]}"
+        if [[ -e "$dev" ]]; then
+            product="${CFG_NAME[$i]}"
+            current_vid=""; current_pid=""
+            [[ -f "$dev/product" ]] && read -r product < "$dev/product" || true
+            [[ -f "$dev/idVendor" ]] && read -r current_vid < "$dev/idVendor" || true
+            [[ -f "$dev/idProduct" ]] && read -r current_pid < "$dev/idProduct" || true
+            if [[ -n "$current_vid" && -n "$current_pid" && ( "$current_vid" != "${CFG_VID[$i]}" || "$current_pid" != "${CFG_PID[$i]}" ) ]]; then
+                echo "    $product (currently $current_vid:$current_pid at ${CFG_PATH[$i]})"
+            else
+                echo "    $product"
+            fi
+            show_usb_chain "$dev"
+        else
+            present_targets=0
+            for target in ${CFG_TARGETS[$i]}; do
+                wake_file="$USB_DEVICES_DIR/$target/power/wakeup"
+                if [[ -e "$wake_file" ]]; then
+                    present_targets=1
+                    wakeup="$(cat "$wake_file" 2>/dev/null || echo unreadable)"
+                    printf '    %-49s wakeup=%s\n' "$target" "$wakeup"
+                fi
+            done
+            (( present_targets == 1 )) || echo "    Not currently connected."
+        fi
+    done
+fi
+
+# Backward-compatible diagnostics for the previous exact-VID:PID rule format.
+if (( found_config == 0 )) && [[ -f "$RULE_FILE" ]]; then
+    declare -A seen_pairs=()
+    while IFS= read -r rule_line; do
+        if [[ "$rule_line" =~ $legacy_rule_regex ]]; then
             vid="${BASH_REMATCH[1],,}"
             pid="${BASH_REMATCH[2],,}"
             pair="$vid:$pid"
@@ -97,7 +175,7 @@ if [[ -f "$RULE_FILE" ]]; then
             echo
             echo "  Configured VID:PID $pair"
             matches=0
-            for dev in /sys/bus/usb/devices/*; do
+            for dev in "$USB_DEVICES_DIR"/*; do
                 [[ -f "$dev/idVendor" && -f "$dev/idProduct" ]] || continue
                 read -r dvid < "$dev/idVendor" || continue
                 read -r dpid < "$dev/idProduct" || continue
@@ -109,21 +187,20 @@ if [[ -f "$RULE_FILE" ]]; then
                     show_usb_chain "$dev"
                 fi
             done
-
             (( matches == 1 )) || echo "    Not currently connected."
         fi
     done < "$RULE_FILE"
 fi
 
 if (( found_config == 0 )); then
-    echo "  No parseable configured VID:PID rules found."
+    echo "  No parseable configured controller rules found."
 fi
 
 echo
 echo "--------------------------------------------"
 echo "All USB device wakeup flags:"
 echo "--------------------------------------------"
-for dev in /sys/bus/usb/devices/*; do
+for dev in "$USB_DEVICES_DIR"/*; do
     [[ -f "$dev/idVendor" && -f "$dev/idProduct" ]] || continue
     read -r vid < "$dev/idVendor" || continue
     read -r pid < "$dev/idProduct" || continue
@@ -138,8 +215,8 @@ echo
 echo "--------------------------------------------"
 echo "Suspend mode:"
 echo "--------------------------------------------"
-if [[ -f /sys/power/mem_sleep ]]; then
-    cat /sys/power/mem_sleep
+if [[ -f "$SYSFS_ROOT/power/mem_sleep" ]]; then
+    cat "$SYSFS_ROOT/power/mem_sleep"
     echo "The bracketed value is active. 'deep' is suspend-to-RAM/S3 on ACPI systems;"
     echo "'s2idle' is suspend-to-idle. USB wake can work with either when supported."
 else
