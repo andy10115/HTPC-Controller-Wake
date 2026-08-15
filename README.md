@@ -1,5 +1,10 @@
 # HTPC Controller Wake-from-Sleep
 
+# THIS REPO IS NOW DEFUNCT
+
+This repo is no longer maintained, but it's source will remain for any who wish to use it. **All work from this repo has been moved into a new app located at**: (https://github.com/andy10115/HTPC-Control-Center)
+
+
 Wake a Linux HTPC from suspend using a game controller connected through a USB
 receiver/dongle. The project is aimed at gaming-focused HTPC setups such as
 Bazzite and CachyOS, but it only depends on Bash, udev/systemd tooling, and the
